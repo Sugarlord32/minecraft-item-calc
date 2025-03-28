@@ -47,8 +47,7 @@ DEFAULT_CONFIG = {
         "shulker": "sb",
         "double_chest": "dc"
     },
-    # New setting: if container preference is "sb" then breakdown outputs use shulker boxes as maximum;
-    # if "dc" then use double chests.
+    # New setting: container_preference ("sb" or "dc")
     "container_preference": "sb"
 }
 
@@ -105,9 +104,9 @@ def save_recipes(recipes, config):
 
 def parse_single_amount(s, config):
     s = s.strip().lower()
-    suf_stack = config["suffixes"]["stack"]
-    suf_shulker = config["suffixes"]["shulker"]
-    suf_dc = config["suffixes"]["double_chest"]
+    suf_stack = config.get("suffixes", {}).get("stack", DEFAULT_CONFIG["suffixes"]["stack"])
+    suf_shulker = config.get("suffixes", {}).get("shulker", DEFAULT_CONFIG["suffixes"]["shulker"])
+    suf_dc = config.get("suffixes", {}).get("double_chest", DEFAULT_CONFIG["suffixes"]["double_chest"])
     if s.endswith(suf_shulker):
         try:
             num = float(s[:-len(suf_shulker)])
@@ -157,12 +156,6 @@ def breakdown_to_double_chests(total_items):
     return int(dcs), int(rem_stacks), int(items)
 
 def format_breakdown(total_items, auto_conv=True, container_override="sb"):
-    """
-    Returns a hierarchical breakdown string.
-    If auto_conv is False, returns items only.
-    If auto_conv is True, then based on container_override ("sb" or "dc"),
-    returns the conversion using either shulker boxes or double chests.
-    """
     total_items = int(total_items)
     if not auto_conv:
         return f"{total_items} item(s)"
@@ -194,7 +187,9 @@ def format_breakdown(total_items, auto_conv=True, container_override="sb"):
 def convert_items_to_stacks(config):
     try:
         raw = input("Enter the total amount (e.g. '100', '5{0}', '2{1}', '1{2}', or combined '30{0}, 15'): ".format(
-            config["suffixes"]["stack"], config["suffixes"]["shulker"], config["suffixes"]["double_chest"]))
+            config.get("suffixes", {}).get("stack", DEFAULT_CONFIG["suffixes"]["stack"]),
+            config.get("suffixes", {}).get("shulker", DEFAULT_CONFIG["suffixes"]["shulker"]),
+            config.get("suffixes", {}).get("double_chest", DEFAULT_CONFIG["suffixes"]["double_chest"])))
         total_items = int(parse_combined_amount(raw, config))
         stacks, items = breakdown_to_stacks(total_items)
         if config["auto_conversion"]:
@@ -207,7 +202,9 @@ def convert_items_to_stacks(config):
 def convert_stacks_to_containers(config):
     try:
         raw = input("Enter the amount (e.g. '10', '3{0}', '1{1}', '1{2}', or '10{0}, 5'): ".format(
-            config["suffixes"]["stack"], config["suffixes"]["shulker"], config["suffixes"]["double_chest"]))
+            config.get("suffixes", {}).get("stack", DEFAULT_CONFIG["suffixes"]["stack"]),
+            config.get("suffixes", {}).get("shulker", DEFAULT_CONFIG["suffixes"]["shulker"]),
+            config.get("suffixes", {}).get("double_chest", DEFAULT_CONFIG["suffixes"]["double_chest"])))
         total_items = int(parse_combined_amount(raw, config))
         stacks, items = breakdown_to_stacks(total_items)
         print(f"Total: {stacks} stack(s) and {items} item(s)")
@@ -237,12 +234,11 @@ def crafting_helper(config):
         print("2. Calculate obtainable outputs from available input items.")
         choice = input("Enter 1 or 2: ")
 
-        # Check for container override in user input (if user types a suffix)
-        user_input = input("Enter the desired amount (supports combined amounts, e.g. '30{0}, 15'): ".format(config["suffixes"]["stack"])).strip()
-        # If input ends with a specific container suffix, use that; otherwise use default.
-        if user_input.endswith(config["suffixes"]["dc"]):
+        user_input = input("Enter the desired amount (supports combined amounts, e.g. '30{0}, 15'): ".format(
+            config.get("suffixes", {}).get("stack", DEFAULT_CONFIG["suffixes"]["stack"]))).strip()
+        if user_input.endswith(config.get("suffixes", {}).get("double_chest", DEFAULT_CONFIG["suffixes"]["double_chest"])):
             container_override = "dc"
-        elif user_input.endswith(config["suffixes"]["sb"]):
+        elif user_input.endswith(config.get("suffixes", {}).get("shulker", DEFAULT_CONFIG["suffixes"]["shulker"])):
             container_override = "sb"
         else:
             container_override = config.get("container_preference", "sb")
@@ -282,17 +278,14 @@ def compute_layered_requirements(layers, final_quantity):
     its total need is summed.
     """
     required = {}
-    # Final product requirement:
     required[layers[-1]["name"]] = final_quantity
     computed_layers = [None] * len(layers)
-    # Process layers from last to first.
     for i in range(len(layers)-1, -1, -1):
         product = layers[i]["name"]
         req_quantity = required.get(product, 0)
         factor = req_quantity / layers[i]["output"]
         layer_req = {ing: factor * qty for ing, qty in layers[i]["inputs"].items()}
         computed_layers[i] = {"layer": i+1, "name": product, "requirements": layer_req}
-        # Propagate for any ingredient produced in an earlier layer.
         for ing, amt in layer_req.items():
             if any(prev_layer["name"] == ing for prev_layer in layers[:i]):
                 required[ing] = required.get(ing, 0) + amt
@@ -311,11 +304,11 @@ def advanced_crafting(recipes, config):
             print(f"  {k}: {inputs_str} -> {v['output']} {k}(s)")
         
     target = input("Enter the target item: ").strip().lower()
-    quantity_input = input("Enter the desired amount (supports combined amounts, e.g. '30{0}, 15'): ".format(config["suffixes"]["stack"])).strip()
-    # Check for explicit container override:
-    if quantity_input.endswith(config["suffixes"]["dc"]):
+    quantity_input = input("Enter the desired amount (supports combined amounts, e.g. '30{0}, 15'): ".format(
+        config.get("suffixes", {}).get("stack", DEFAULT_CONFIG["suffixes"]["stack"]))).strip()
+    if quantity_input.endswith(config.get("suffixes", {}).get("double_chest", DEFAULT_CONFIG["suffixes"]["double_chest"])):
         container_override = "dc"
-    elif quantity_input.endswith(config["suffixes"]["sb"]):
+    elif quantity_input.endswith(config.get("suffixes", {}).get("shulker", DEFAULT_CONFIG["suffixes"]["shulker"])):
         container_override = "sb"
     else:
         container_override = config.get("container_preference", "sb")
@@ -476,9 +469,9 @@ def config_menu(config):
             print("Auto conversion is now", "ON" if config["auto_conversion"] else "OFF")
             save_config(config)
         elif choice == "2":
-            new_stack = input("Enter new suffix for stacks (current: '{}'): ".format(config["suffixes"]["stack"])).strip()
-            new_shulker = input("Enter new suffix for shulker boxes (current: '{}'): ".format(config["suffixes"]["shulker"])).strip()
-            new_dc = input("Enter new suffix for double chests (current: '{}'): ".format(config["suffixes"]["double_chest"])).strip()
+            new_stack = input("Enter new suffix for stacks (current: '{}'): ".format(config.get("suffixes", {}).get("stack", DEFAULT_CONFIG["suffixes"]["stack"]))).strip()
+            new_shulker = input("Enter new suffix for shulker boxes (current: '{}'): ".format(config.get("suffixes", {}).get("shulker", DEFAULT_CONFIG["suffixes"]["shulker"]))).strip()
+            new_dc = input("Enter new suffix for double chests (current: '{}'): ".format(config.get("suffixes", {}).get("double_chest", DEFAULT_CONFIG["suffixes"]["double_chest"]))).strip()
             if new_stack:
                 config["suffixes"]["stack"] = new_stack
             if new_shulker:
