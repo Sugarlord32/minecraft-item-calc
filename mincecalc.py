@@ -3,64 +3,115 @@ import os
 import json
 import math
 
-# Constants for conversions
+#######################
+# Constants & Defaults
+#######################
+
 BASE_STACK_SIZE = 64
-SHULKER_STACKS = 27  # Number of stacks per shulker box
-DOUBLE_CHEST_STACKS = 54  # Number of stacks per double chest
+SHULKER_STACKS = 27     # Both shulker boxes and double chests use the same number of stacks
+DOUBLE_CHEST_STACKS = 54
 RECIPES_FILE = "recipes.json"
+CONFIG_FILE = "config.json"
+
+DEFAULT_RECIPES = {
+    # Simple recipes (one layer)
+    "plank": {"inputs": {"log": 1}, "output": 4},
+    "chest": {"inputs": {"plank": 8}, "output": 1},
+    "hopper": {"inputs": {"chest": 1, "iron": 5}, "output": 1},
+    "minecart": {"inputs": {"iron": 5}, "output": 1},
+    "minecart_hopper": {"inputs": {"minecart": 1, "hopper": 1}, "output": 1}
+}
+
+DEFAULT_CONFIG = {
+    "auto_conversion": True,
+    "suffixes": {
+        "stack": "s",
+        "shulker": "sb",
+        "double_chest": "dc"
+    }
+}
+
+#######################
+# Config Functions
+#######################
+
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                config = json.load(f)
+            return config
+        except Exception as e:
+            print("Error loading config:", e)
+    return DEFAULT_CONFIG.copy()
+
+def save_config(config):
+    try:
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(config, f, indent=4)
+    except Exception as e:
+        print("Error saving config:", e)
+
+#######################
+# Recipes Functions
+#######################
 
 def load_recipes():
-    """Load recipes from a JSON file if it exists, otherwise return default recipes."""
-    default_recipes = {
-        "plank": {"inputs": {"log": 1}, "output": 4},
-        "chest": {"inputs": {"plank": 8}, "output": 1},
-        "hopper": {"inputs": {"chest": 1, "iron": 5}, "output": 1},
-        "minecart": {"inputs": {"iron": 5}, "output": 1},
-        "minecart_hopper": {"inputs": {"minecart": 1, "hopper": 1}, "output": 1}
-    }
     if os.path.exists(RECIPES_FILE):
         try:
             with open(RECIPES_FILE, "r") as f:
-                recipes = json.load(f)
-            return recipes
+                data = json.load(f)
+            # Expect data to be a dict with a "recipes" key; if not, assume entire file is recipes.
+            if isinstance(data, dict) and "recipes" in data:
+                return data["recipes"]
+            else:
+                return data
         except Exception as e:
             print("Error loading recipes file:", e)
             print("Using default recipes.")
-    return default_recipes
+    return DEFAULT_RECIPES.copy()
 
-def save_recipes(recipes):
-    """Save the recipes dictionary to a JSON file."""
+def save_recipes(recipes, config):
+    # Save recipes along with config so they remain separate.
     try:
+        data = {"recipes": recipes}
         with open(RECIPES_FILE, "w") as f:
-            json.dump(recipes, f, indent=4)
+            json.dump(data, f, indent=4)
     except Exception as e:
         print("Error saving recipes:", e)
 
-def parse_single_amount(s):
+#######################
+# Conversion Helpers
+#######################
+
+def parse_single_amount(s, config):
     """
-    Parse a string amount that can have suffixes:
-      - No suffix: items (e.g. "100" -> 100 items)
-      - 's' suffix: stacks (e.g. "5s" -> 5 * 64 items)
-      - 'sb' suffix: shulker boxes (e.g. "2sb" -> 2 * 27 * 64 items)
-      - 'dc' suffix: double chests (e.g. "1dc" -> 1 * 54 * 64 items)
-    Returns a float representing the number of items.
+    Parse a single value that can end with:
+      - (no suffix): items
+      - config["suffixes"]["stack"]: stacks (×64)
+      - config["suffixes"]["shulker"]: shulker boxes (×27×64)
+      - config["suffixes"]["double_chest"]: double chests (×54×64)
+    Returns a float number of items.
     """
     s = s.strip().lower()
-    if s.endswith("sb"):
+    suf_stack = config["suffixes"]["stack"]
+    suf_shulker = config["suffixes"]["shulker"]
+    suf_dc = config["suffixes"]["double_chest"]
+    if s.endswith(suf_shulker):
         try:
-            num = float(s[:-2])
+            num = float(s[:-len(suf_shulker)])
             return num * BASE_STACK_SIZE * SHULKER_STACKS
         except ValueError:
             raise ValueError("Invalid number for shulker boxes.")
-    elif s.endswith("dc"):
+    elif s.endswith(suf_dc):
         try:
-            num = float(s[:-2])
+            num = float(s[:-len(suf_dc)])
             return num * BASE_STACK_SIZE * DOUBLE_CHEST_STACKS
         except ValueError:
             raise ValueError("Invalid number for double chests.")
-    elif s.endswith("s"):
+    elif s.endswith(suf_stack):
         try:
-            num = float(s[:-1])
+            num = float(s[:-len(suf_stack)])
             return num * BASE_STACK_SIZE
         except ValueError:
             raise ValueError("Invalid number for stacks.")
@@ -70,22 +121,22 @@ def parse_single_amount(s):
         except ValueError:
             raise ValueError("Invalid amount format.")
 
-def parse_combined_amount(s):
+def parse_combined_amount(s, config):
     """
-    Parse an input string that may contain multiple amounts separated by commas,
-    e.g. "30s, 15" means 30 stacks + 15 items.
-    Returns the total as a float (in items).
+    Parse a string that may contain multiple parts separated by commas,
+    e.g. "30s, 15" -> 30 stacks + 15 items.
+    Returns a float (number of items).
     """
     parts = s.split(",")
     total = 0.0
     for part in parts:
-        total += parse_single_amount(part)
+        total += parse_single_amount(part, config)
     return total
 
 def breakdown_to_stacks(total_items):
     """
-    Breaks total_items (an integer number of items) into full stacks and remaining items.
-    Returns a tuple: (stacks, items)
+    Convert total_items (an integer) into full stacks and remainder items.
+    Returns (stacks, items).
     """
     stacks = total_items // BASE_STACK_SIZE
     items = total_items % BASE_STACK_SIZE
@@ -93,7 +144,7 @@ def breakdown_to_stacks(total_items):
 
 def breakdown_to_shulkers(total_items):
     """
-    Breaks total_items into shulker boxes, remaining stacks, and remaining items.
+    Breaks total_items into shulker boxes, remaining stacks, and items.
     """
     stacks, items = breakdown_to_stacks(total_items)
     shulkers = stacks // SHULKER_STACKS
@@ -102,110 +153,86 @@ def breakdown_to_shulkers(total_items):
 
 def breakdown_to_double_chests(total_items):
     """
-    Breaks total_items into double chests, remaining stacks, and remaining items.
+    Breaks total_items into double chests, remaining stacks, and items.
     """
     stacks, items = breakdown_to_stacks(total_items)
     dcs = stacks // DOUBLE_CHEST_STACKS
     rem_stacks = stacks % DOUBLE_CHEST_STACKS
     return int(dcs), int(rem_stacks), int(items)
 
-def format_breakdown(total_items):
+def format_breakdown(total_items, auto_conv=True):
     """
-    Formats total_items into a hierarchical breakdown.
-    The hierarchy is: double chests > shulker boxes > stacks > items.
-    Only levels with at least 1 unit are displayed.
+    Given a number of items (integer), returns a hierarchical breakdown.
+    If auto_conv is True, returns in highest containers (DC = SB > stacks > items).
+    If False, simply returns items.
     """
     total_items = int(total_items)
+    if not auto_conv:
+        return f"{total_items} item(s)"
+    # Since DCs and SBs are considered equal in capacity,
+    # we show both if the amount is high enough for at least one container.
     stacks, items = breakdown_to_stacks(total_items)
-    if stacks >= DOUBLE_CHEST_STACKS:
-        dcs, rem_stacks, rem_items = breakdown_to_double_chests(total_items)
-        # For the remaining stacks, try to break into shulkers if possible.
-        if rem_stacks >= SHULKER_STACKS:
-            shulkers, rem_stacks2, rem_items = breakdown_to_shulkers(rem_stacks * BASE_STACK_SIZE + rem_items)
-            parts = []
-            if dcs:
-                parts.append(f"{dcs} double chest(s)")
-            if shulkers:
-                parts.append(f"{shulkers} shulker box(es)")
-            if rem_stacks2:
-                parts.append(f"{rem_stacks2} stack(s)")
-            if rem_items:
-                parts.append(f"{rem_items} item(s)")
-            return ", ".join(parts)
-        else:
-            parts = []
-            if dcs:
-                parts.append(f"{dcs} double chest(s)")
-            if rem_stacks:
-                parts.append(f"{rem_stacks} stack(s)")
-            if rem_items:
-                parts.append(f"{rem_items} item(s)")
-            return ", ".join(parts)
-    elif stacks >= SHULKER_STACKS:
-        shulkers, rem_stacks, rem_items = breakdown_to_shulkers(total_items)
-        parts = []
-        if shulkers:
+    parts = []
+    if stacks >= SHULKER_STACKS:
+        # Breakdown as both double chest and shulker boxes:
+        dcs, rem_stacks_dc, rem_items_dc = breakdown_to_double_chests(total_items)
+        shulkers, rem_stacks_sb, rem_items_sb = breakdown_to_shulkers(total_items)
+        # We display both if at least one container is present.
+        if dcs > 0 or shulkers > 0:
+            parts.append(f"{dcs} double chest(s)")
             parts.append(f"{shulkers} shulker box(es)")
-        if rem_stacks:
-            parts.append(f"{rem_stacks} stack(s)")
-        if rem_items:
-            parts.append(f"{rem_items} item(s)")
-        return ", ".join(parts)
-    elif stacks >= 1:
-        stacks, items = breakdown_to_stacks(total_items)
-        parts = []
-        if stacks:
-            parts.append(f"{stacks} stack(s)")
-        if items:
-            parts.append(f"{items} item(s)")
+            # Use remaining stacks/items from DC breakdown (they are similar)
+            if rem_stacks_dc:
+                parts.append(f"{rem_stacks_dc} stack(s)")
+            if rem_items_dc:
+                parts.append(f"{rem_items_dc} item(s)")
+            return ", ".join(parts)
+    if stacks >= 1:
+        st, it = breakdown_to_stacks(total_items)
+        parts.append(f"{st} stack(s)")
+        if it:
+            parts.append(f"{it} item(s)")
         return ", ".join(parts)
     else:
         return f"{total_items} item(s)"
 
-# Simple Conversion Helpers
+#######################
+# Conversion Menu Functions
+#######################
 
-def convert_items_to_stacks():
-    """Converts a number of items into full stacks and remainder.
-       You can input using suffixes or combined inputs.
-    """
+def convert_items_to_stacks(config):
     try:
-        raw = input("Enter the total amount (e.g. '100', '5s', '2sb', '1dc', or combined '30s, 15'): ")
-        total_items = int(parse_combined_amount(raw))
+        raw = input("Enter the total amount (e.g. '100', '5{0}', '2{1}', '1{2}', or combined '30{0}, 15'): ".format(
+            config["suffixes"]["stack"], config["suffixes"]["shulker"], config["suffixes"]["double_chest"]))
+        total_items = int(parse_combined_amount(raw, config))
         stacks, items = breakdown_to_stacks(total_items)
-        print(f"{total_items} item(s) = {stacks} full stack(s) and {items} item(s) remaining.")
+        if config["auto_conversion"]:
+            print(f"{total_items} item(s) = {stacks} full stack(s) and {items} item(s) remaining.")
+        else:
+            print(f"{total_items} item(s)")
     except ValueError as e:
         print(e)
 
-def convert_stacks_to_containers():
-    """Converts a number of items (entered with any suffixes/combined) into:
-       - A shulker box breakdown: shulker boxes, stacks, and items.
-       - A double chest breakdown: double chests, stacks, and items.
-    """
+def convert_stacks_to_containers(config):
     try:
-        raw = input("Enter the amount (e.g. '10', '3s', '1sb', '1dc', or '10s, 5'): ")
-        total_items = int(parse_combined_amount(raw))
-        # Breakdown into full stacks & items (for reference)
+        raw = input("Enter the amount (e.g. '10', '3{0}', '1{1}', '1{2}', or '10{0}, 5'): ".format(
+            config["suffixes"]["stack"], config["suffixes"]["shulker"], config["suffixes"]["double_chest"]))
+        total_items = int(parse_combined_amount(raw, config))
         stacks, items = breakdown_to_stacks(total_items)
         print(f"Total: {stacks} stack(s) and {items} item(s)")
-        # Shulker box breakdown
-        shulkers, rem_stacks, rem_items = breakdown_to_shulkers(total_items)
-        print(f"As shulker boxes: {shulkers} shulker box(es), {rem_stacks} stack(s) and {rem_items} item(s) remaining.")
-        # Double chest breakdown
-        dcs, rem_stacks_dc, rem_items_dc = breakdown_to_double_chests(total_items)
-        print(f"As double chests: {dcs} double chest(s), {rem_stacks_dc} stack(s) and {rem_items_dc} item(s) remaining.")
+        if config["auto_conversion"]:
+            shulkers, rem_stacks, rem_items = breakdown_to_shulkers(total_items)
+            print(f"As shulker boxes: {shulkers} shulker box(es), {rem_stacks} stack(s) and {rem_items} item(s) remaining.")
+            dcs, rem_stacks_dc, rem_items_dc = breakdown_to_double_chests(total_items)
+            print(f"As double chests: {dcs} double chest(s), {rem_stacks_dc} stack(s) and {rem_items_dc} item(s) remaining.")
     except ValueError as e:
         print(e)
 
-# Simple Crafting Helper
+#######################
+# Crafting Helpers
+#######################
 
-def crafting_helper():
-    """
-    Provides a simple crafting calculation.
-    You define a recipe ratio and then either:
-      1. Calculate required input items for a desired output amount.
-      2. Calculate obtainable outputs from available input items.
-    The result is displayed using a breakdown (stacks and items, etc.).
-    """
+def crafting_helper(config):
     try:
         print("Define your recipe conversion ratio:")
         input_required = float(input("Enter the number of input items required: "))
@@ -223,27 +250,24 @@ def crafting_helper():
             desired_output = float(input("Enter the desired number of outputs: "))
             required_inputs = (input_required / output_result) * desired_output
             print(f"You need approximately {int(round(required_inputs))} input item(s) to produce {int(round(desired_output))} output(s).")
-            print("That is:", format_breakdown(required_inputs))
+            print("That is:", format_breakdown(required_inputs, config["auto_conversion"]))
         elif choice == "2":
             available_inputs = float(input("Enter the number of available input items: "))
             produced_outputs = (output_result / input_required) * available_inputs
             print(f"You can produce approximately {int(round(produced_outputs))} output item(s) with {int(round(available_inputs))} input(s).")
-            print("That is:", format_breakdown(produced_outputs))
+            print("That is:", format_breakdown(produced_outputs, config["auto_conversion"]))
         else:
             print("Invalid choice. Please select either 1 or 2.")
     except ValueError:
         print("Invalid input. Please enter numerical values.")
 
-# Advanced Crafting Helper with layered recipes
-
 def compute_requirements(item, quantity, recipes):
     """
-    Recursively computes the base (non-craftable) ingredient requirements
-    for a given item and quantity.
-    If an ingredient does not appear in recipes, it is assumed to be base.
-    Returns a dictionary mapping ingredient names to required amounts (in items).
+    Recursively computes the base ingredient requirements for a given item.
+    If an ingredient is not craftable (not in recipes), it's considered base.
+    Returns a dict mapping ingredient names to required amounts (in items).
     """
-    if item not in recipes:
+    if item not in recipes or ("layers" in recipes[item]):
         return {item: quantity}
     recipe = recipes[item]
     factor = quantity / recipe["output"]
@@ -255,81 +279,224 @@ def compute_requirements(item, quantity, recipes):
             req[k] = req.get(k, 0) + v
     return req
 
-def advanced_crafting(recipes):
+def compute_layered_requirements(layers, final_quantity):
     """
-    Advanced crafting helper for layered and multiple recipes.
-    It displays available recipes, then asks for a target item and a desired amount.
-    It computes and displays the required base ingredients,
-    with each amount given in a breakdown (double chests, shulker boxes, stacks and items).
+    Given a list of layers (each a dict with "name", "inputs", "output")
+    and a desired final quantity (of the final product), this function
+    works backwards to compute the required amounts at each layer.
+    It assumes that the product of one layer (its "name") is used in the next layer.
+    Returns a list of dicts for each layer (in order).
     """
+    layered_reqs = []
+    current_quantity = final_quantity
+    # Process layers from last to first
+    for i in range(len(layers)-1, -1, -1):
+        layer = layers[i]
+        factor = current_quantity / layer["output"]
+        req = {ing: factor * qty for ing, qty in layer["inputs"].items()}
+        layered_reqs.insert(0, {"layer": i+1, "name": layer["name"], "requirements": req})
+        # For previous layer, assume that one of the ingredients is the product from this layer.
+        if i > 0:
+            # We assume the current layer's product (layer["name"]) appears in the previous layer's inputs.
+            current_quantity = req.get(layer["name"], 0)
+    return layered_reqs
+
+def advanced_crafting(recipes, config):
     print("\n--- Advanced Crafting Helper ---")
     print("Available recipes:")
     for k, v in recipes.items():
-        inputs_str = " + ".join(f"{amt} {ing}" for ing, amt in v["inputs"].items())
-        print(f"  {k}: {inputs_str} -> {v['output']} {k}(s)")
+        if "layers" in v:
+            # For layered recipes, list each layer's summary.
+            layers = v["layers"]
+            layers_str = " | ".join([f"Layer {i+1}: {layer['inputs']} -> {layer['output']} {layer['name']}(s)" for i, layer in enumerate(layers)])
+            print(f"  {k} (multi-layer): {layers_str}")
+        else:
+            inputs_str = " + ".join(f"{amt} {ing}" for ing, amt in v["inputs"].items())
+            print(f"  {k}: {inputs_str} -> {v['output']} {k}(s)")
         
     target = input("Enter the target item: ").strip().lower()
-    quantity_input = input("Enter the desired amount (supports combined amounts, e.g. '30s, 15'): ").strip()
+    quantity_input = input("Enter the desired amount (supports combined amounts, e.g. '30{0}, 15'): ".format(config["suffixes"]["stack"])).strip()
     try:
-        quantity = int(parse_combined_amount(quantity_input))
+        quantity = int(parse_combined_amount(quantity_input, config))
     except ValueError as e:
         print(e)
         return
-    
-    requirements = compute_requirements(target, quantity, recipes)
-    print(f"\nTo craft {format_breakdown(quantity)} of '{target}', you need:")
-    for ing, amt in requirements.items():
-        # Only display levels if the highest container is at least 1
-        print(f"  {ing}: {format_breakdown(amt)}")
+
+    # Check if recipe is multi-layered.
+    if target in recipes and "layers" in recipes[target]:
+        layers = recipes[target]["layers"]
+        layered_reqs = compute_layered_requirements(layers, quantity)
+        print(f"\nTo craft {format_breakdown(quantity, config['auto_conversion'])} of '{target}', you need the following per layer:")
+        for layer in layered_reqs:
+            print(f"Layer {layer['layer']} ({layer['name']}):")
+            for ing, amt in layer["requirements"].items():
+                # If auto_conversion is off, show items only.
+                print(f"  {ing}: {int(round(amt))} item(s)" if not config["auto_conversion"] else f"  {ing}: {format_breakdown(amt, config['auto_conversion'])}")
+    else:
+        req = compute_requirements(target, quantity, recipes)
+        print(f"\nTo craft {format_breakdown(quantity, config['auto_conversion'])} of '{target}', you need:")
+        for ing, amt in req.items():
+            print(f"  {ing}: {int(round(amt))} item(s)" if not config["auto_conversion"] else f"  {ing}: {format_breakdown(amt, config['auto_conversion'])}")
     print()
 
+#######################
+# Add Recipe Function (with multi-layer support)
+#######################
+
 def add_recipe(recipes):
-    """
-    Allows the user to add a new recipe to the recipes dictionary.
-    The user inputs:
-      - The name of the output item.
-      - The quantity produced.
-      - The input ingredients as a comma-separated list of 'ingredient: quantity' pairs.
-    The new recipe is added and the updated recipes are saved.
-    """
     print("\n--- Add a New Recipe ---")
     output_item = input("Enter the output item name: ").strip().lower()
     try:
-        output_qty = float(input("Enter the quantity produced by this recipe: "))
-        if output_qty <= 0:
-            print("Output quantity must be positive.")
+        layers_count = int(input("How many layers does this recipe have? (Enter 1 for a simple recipe): "))
+        if layers_count <= 0:
+            print("Number of layers must be at least 1.")
             return
     except ValueError:
-        print("Invalid output quantity.")
+        print("Invalid number for layers.")
         return
 
-    inputs_raw = input("Enter the input ingredients (format: ingredient:quantity, separated by commas): ").strip()
-    inputs = {}
-    try:
-        for pair in inputs_raw.split(","):
-            if ':' not in pair:
-                print(f"Skipping invalid input format: {pair}")
-                continue
-            ing, qty = pair.split(":", 1)
-            ing = ing.strip().lower()
-            qty = float(qty.strip())
-            if qty <= 0:
-                print(f"Quantity for {ing} must be positive.")
-                continue
-            inputs[ing] = qty
-    except ValueError:
-        print("Invalid ingredient quantity.")
-        return
-
-    if not inputs:
-        print("No valid ingredients were entered.")
-        return
-
-    recipes[output_item] = {"inputs": inputs, "output": output_qty}
-    save_recipes(recipes)
+    if layers_count == 1:
+        try:
+            output_qty = float(input("Enter the quantity produced by this recipe: "))
+            if output_qty <= 0:
+                print("Output quantity must be positive.")
+                return
+        except ValueError:
+            print("Invalid output quantity.")
+            return
+        inputs_raw = input("Enter the input ingredients (format: ingredient:quantity, separated by commas): ").strip()
+        inputs = {}
+        try:
+            for pair in inputs_raw.split(","):
+                if ':' not in pair:
+                    print(f"Skipping invalid input format: {pair}")
+                    continue
+                ing, qty = pair.split(":", 1)
+                ing = ing.strip().lower()
+                qty = float(qty.strip())
+                if qty <= 0:
+                    print(f"Quantity for {ing} must be positive.")
+                    continue
+                inputs[ing] = qty
+        except ValueError:
+            print("Invalid ingredient quantity.")
+            return
+        if not inputs:
+            print("No valid ingredients were entered.")
+            return
+        recipes[output_item] = {"inputs": inputs, "output": output_qty}
+    else:
+        # Multi-layer recipe.
+        layers = []
+        for i in range(1, layers_count+1):
+            print(f"\n--- Layer {i} ---")
+            layer_name = input("Enter the product name for this layer (for final layer, this is the final output name): ").strip().lower()
+            try:
+                layer_output = float(input("Enter the output quantity produced in this layer: "))
+                if layer_output <= 0:
+                    print("Output quantity must be positive.")
+                    return
+            except ValueError:
+                print("Invalid output quantity.")
+                return
+            inputs_raw = input("Enter the input ingredients for this layer (format: ingredient:quantity, separated by commas): ").strip()
+            inputs = {}
+            try:
+                for pair in inputs_raw.split(","):
+                    if ':' not in pair:
+                        print(f"Skipping invalid input format: {pair}")
+                        continue
+                    ing, qty = pair.split(":", 1)
+                    ing = ing.strip().lower()
+                    qty = float(qty.strip())
+                    if qty <= 0:
+                        print(f"Quantity for {ing} must be positive.")
+                        continue
+                    inputs[ing] = qty
+            except ValueError:
+                print("Invalid ingredient quantity.")
+                return
+            if not inputs:
+                print("No valid ingredients were entered for this layer.")
+                return
+            layers.append({"name": layer_name, "inputs": inputs, "output": layer_output})
+        recipes[output_item] = {"layers": layers}
+    save_recipes(recipes, DEFAULT_CONFIG)
     print(f"Recipe for '{output_item}' added successfully.\n")
 
+#######################
+# Overworld/Nether Converter
+#######################
+
+def convert_coordinates():
+    print("\n--- Overworld/Nether Converter ---")
+    print("Choose conversion type:")
+    print("1. Overworld to Nether")
+    print("2. Nether to Overworld")
+    choice = input("Enter 1 or 2: ").strip()
+    try:
+        x = float(input("Enter x coordinate: "))
+        y = float(input("Enter y coordinate: "))
+        z = float(input("Enter z coordinate: "))
+    except ValueError:
+        print("Invalid coordinate input.")
+        return
+    if choice == "1":
+        # Overworld to Nether (divide X and Z by 8)
+        conv_x = x / 8
+        conv_z = z / 8
+        print(f"Overworld ({x}, {y}, {z}) -> Nether ({conv_x:.2f}, {y:.2f}, {conv_z:.2f})")
+    elif choice == "2":
+        # Nether to Overworld (multiply X and Z by 8)
+        conv_x = x * 8
+        conv_z = z * 8
+        print(f"Nether ({x}, {y}, {z}) -> Overworld ({conv_x:.2f}, {y:.2f}, {conv_z:.2f})")
+    else:
+        print("Invalid choice.")
+
+#######################
+# Config Menu
+#######################
+
+def config_menu(config):
+    while True:
+        print("\n--- Configuration Menu ---")
+        print(f"1. Toggle auto conversion (currently {'ON' if config['auto_conversion'] else 'OFF'})")
+        print("2. Change suffixes")
+        print("3. Reset suffixes to default")
+        print("4. Back to main menu")
+        choice = input("Select an option (1-4): ").strip()
+        if choice == "1":
+            config["auto_conversion"] = not config["auto_conversion"]
+            print("Auto conversion is now", "ON" if config["auto_conversion"] else "OFF")
+            save_config(config)
+        elif choice == "2":
+            new_stack = input("Enter new suffix for stacks (current: '{}'): ".format(config["suffixes"]["stack"])).strip()
+            new_shulker = input("Enter new suffix for shulker boxes (current: '{}'): ".format(config["suffixes"]["shulker"])).strip()
+            new_dc = input("Enter new suffix for double chests (current: '{}'): ".format(config["suffixes"]["double_chest"])).strip()
+            if new_stack:
+                config["suffixes"]["stack"] = new_stack
+            if new_shulker:
+                config["suffixes"]["shulker"] = new_shulker
+            if new_dc:
+                config["suffixes"]["double_chest"] = new_dc
+            print("Suffixes updated.")
+            save_config(config)
+        elif choice == "3":
+            config["suffixes"] = DEFAULT_CONFIG["suffixes"].copy()
+            print("Suffixes reset to default.")
+            save_config(config)
+        elif choice == "4":
+            break
+        else:
+            print("Invalid option.")
+
+#######################
+# Main Menu
+#######################
+
 def main():
+    config = load_config()
     recipes = load_recipes()
     while True:
         print("\nMinecraft Calculator Helper")
@@ -338,24 +505,30 @@ def main():
         print("3. Simple Crafting Helper (single recipe ratio)")
         print("4. Advanced Crafting Helper (layered recipes)")
         print("5. Add a new recipe")
-        print("6. Exit")
-        choice = input("Select an option (1-6): ").strip()
+        print("6. Overworld/Nether Converter")
+        print("7. Configure settings")
+        print("8. Exit")
+        choice = input("Select an option (1-8): ").strip()
 
         if choice == "1":
-            convert_items_to_stacks()
+            convert_items_to_stacks(config)
         elif choice == "2":
-            convert_stacks_to_containers()
+            convert_stacks_to_containers(config)
         elif choice == "3":
-            crafting_helper()
+            crafting_helper(config)
         elif choice == "4":
-            advanced_crafting(recipes)
+            advanced_crafting(recipes, config)
         elif choice == "5":
             add_recipe(recipes)
         elif choice == "6":
+            convert_coordinates()
+        elif choice == "7":
+            config_menu(config)
+        elif choice == "8":
             print("Exiting. Happy crafting!")
             break
         else:
-            print("Invalid option. Please choose from 1 to 6.")
+            print("Invalid option. Please choose from 1 to 8.")
 
 if __name__ == '__main__':
     main()
