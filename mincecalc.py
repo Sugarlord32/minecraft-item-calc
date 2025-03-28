@@ -28,6 +28,15 @@ DEFAULT_RECIPES = {
             {"name": "trapdoor", "inputs": {"planks": 6}, "output": 2}
         ]
     },
+    # Example multi-layer recipe for ladder:
+    # Layer 1: logs -> planks; Layer 2: planks -> sticks; Layer 3: sticks -> ladders
+    "ladder": {
+        "layers": [
+            {"name": "planks", "inputs": {"logs": 1}, "output": 4},
+            {"name": "sticks", "inputs": {"planks": 2}, "output": 4},
+            {"name": "ladders", "inputs": {"sticks": 6}, "output": 3}
+        ]
+    },
     # Example multi-layer recipe for grindstone (numbers are illustrative):
     "grindstone": {
         "layers": [
@@ -47,7 +56,6 @@ DEFAULT_CONFIG = {
         "shulker": "sb",
         "double_chest": "dc"
     },
-    # New setting: container_preference ("sb" or "dc")
     "container_preference": "sb"
 }
 
@@ -272,24 +280,33 @@ def compute_requirements(item, quantity, recipes):
 
 def compute_layered_requirements(layers, final_quantity):
     """
-    Given a list of layers (ordered from first to last) and a desired final quantity,
-    compute for each layer the total inputs required.
-    Requirements are propagated backward so that if an ingredient is used in multiple layers,
-    its total need is summed.
+    Compute requirements using integer (ceiling) math at each layer.
+    Process layers from final to first. For each layer:
+      - Determine the number of crafts needed = ceil(required / output)
+      - Calculate the total inputs = crafts * input quantity for each ingredient.
+      - Propagate the required amount to earlier layers if that ingredient is produced there.
+    Returns a list of computed layer dictionaries (in order).
     """
-    required = {}
-    required[layers[-1]["name"]] = final_quantity
-    computed_layers = [None] * len(layers)
-    for i in range(len(layers)-1, -1, -1):
-        product = layers[i]["name"]
-        req_quantity = required.get(product, 0)
-        factor = req_quantity / layers[i]["output"]
-        layer_req = {ing: factor * qty for ing, qty in layers[i]["inputs"].items()}
-        computed_layers[i] = {"layer": i+1, "name": product, "requirements": layer_req}
+    n = len(layers)
+    # Initialize required amounts for each layer's product.
+    required = [0] * n
+    required[-1] = final_quantity  # Final product required.
+    computed = [None] * n
+    # Process layers from last to first.
+    for i in range(n-1, -1, -1):
+        layer = layers[i]
+        # Number of crafts needed, rounded up.
+        crafts = math.ceil(required[i] / layer["output"])
+        produced = crafts * layer["output"]
+        layer_req = {ing: crafts * qty for ing, qty in layer["inputs"].items()}
+        computed[i] = {"layer": i+1, "name": layer["name"], "crafts": crafts, "produced": produced, "requirements": layer_req}
+        # Propagate requirements for ingredients produced by an earlier layer.
         for ing, amt in layer_req.items():
-            if any(prev_layer["name"] == ing for prev_layer in layers[:i]):
-                required[ing] = required.get(ing, 0) + amt
-    return computed_layers
+            # Check if any earlier layer produces this ingredient.
+            for j in range(i):
+                if layers[j]["name"] == ing:
+                    required[j] += amt
+    return computed
 
 def advanced_crafting(recipes, config):
     print("\n--- Advanced Crafting Helper ---")
@@ -322,9 +339,10 @@ def advanced_crafting(recipes, config):
         layers = recipes[target]["layers"]
         layered_reqs = compute_layered_requirements(layers, quantity)
         print(f"\nTo craft {format_breakdown(quantity, config['auto_conversion'], container_override)} of '{target}', you need the following per layer:")
-        for layer in layered_reqs:
-            print(f"Layer {layer['layer']} ({layer['name']}):")
-            for ing, amt in layer["requirements"].items():
+        for comp in layered_reqs:
+            print(f"Layer {comp['layer']} ({comp['name']}):")
+            print(f"  Crafts required: {comp['crafts']} (produces {comp['produced']} {comp['name']}(s))")
+            for ing, amt in comp["requirements"].items():
                 if not config["auto_conversion"]:
                     print(f"  {ing}: {int(round(amt))} item(s)")
                 else:
