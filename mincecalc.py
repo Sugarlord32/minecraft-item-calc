@@ -8,8 +8,8 @@ import math
 #######################
 
 BASE_STACK_SIZE = 64
-SHULKER_STACKS = 27     # Both shulker boxes and double chests use the same number of stacks
-DOUBLE_CHEST_STACKS = 54
+SHULKER_STACKS = 27     # Number of stacks per shulker box
+DOUBLE_CHEST_STACKS = 54  # Number of stacks per double chest
 RECIPES_FILE = "recipes.json"
 CONFIG_FILE = "config.json"
 
@@ -35,7 +35,9 @@ DEFAULT_RECIPES = {
             {"name": "sticks", "inputs": {"planks": 6}, "output": 4},
             {"name": "grindstone", "inputs": {"stone slab": 1, "planks": 60, "sticks": 60}, "output": 1}
         ]
-    }
+    },
+    # Example recipe for scaffolding (illustrative)
+    "scaffolding": {"inputs": {"bamboo": 6, "string": 13}, "output": 64}
 }
 
 DEFAULT_CONFIG = {
@@ -44,7 +46,10 @@ DEFAULT_CONFIG = {
         "stack": "s",
         "shulker": "sb",
         "double_chest": "dc"
-    }
+    },
+    # New setting: if container preference is "sb" then breakdown outputs use shulker boxes as maximum;
+    # if "dc" then use double chests.
+    "container_preference": "sb"
 }
 
 #######################
@@ -151,31 +156,36 @@ def breakdown_to_double_chests(total_items):
     rem_stacks = stacks % DOUBLE_CHEST_STACKS
     return int(dcs), int(rem_stacks), int(items)
 
-def format_breakdown(total_items, auto_conv=True):
+def format_breakdown(total_items, auto_conv=True, container_override="sb"):
+    """
+    Returns a hierarchical breakdown string.
+    If auto_conv is False, returns items only.
+    If auto_conv is True, then based on container_override ("sb" or "dc"),
+    returns the conversion using either shulker boxes or double chests.
+    """
     total_items = int(total_items)
     if not auto_conv:
         return f"{total_items} item(s)"
-    stacks, items = breakdown_to_stacks(total_items)
-    parts = []
-    if stacks >= SHULKER_STACKS:
-        dcs, rem_stacks_dc, rem_items_dc = breakdown_to_double_chests(total_items)
-        shulkers, rem_stacks_sb, rem_items_sb = breakdown_to_shulkers(total_items)
-        if dcs > 0 or shulkers > 0:
+    if container_override == "dc":
+        dcs, rem_stacks, rem_items = breakdown_to_double_chests(total_items)
+        parts = []
+        if dcs:
             parts.append(f"{dcs} double chest(s)")
+        if rem_stacks:
+            parts.append(f"{rem_stacks} stack(s)")
+        if rem_items:
+            parts.append(f"{rem_items} item(s)")
+        return ", ".join(parts) if parts else f"{total_items} item(s)"
+    else:  # default "sb"
+        shulkers, rem_stacks, rem_items = breakdown_to_shulkers(total_items)
+        parts = []
+        if shulkers:
             parts.append(f"{shulkers} shulker box(es)")
-            if rem_stacks_dc:
-                parts.append(f"{rem_stacks_dc} stack(s)")
-            if rem_items_dc:
-                parts.append(f"{rem_items_dc} item(s)")
-            return ", ".join(parts)
-    if stacks >= 1:
-        st, it = breakdown_to_stacks(total_items)
-        parts.append(f"{st} stack(s)")
-        if it:
-            parts.append(f"{it} item(s)")
-        return ", ".join(parts)
-    else:
-        return f"{total_items} item(s)"
+        if rem_stacks:
+            parts.append(f"{rem_stacks} stack(s)")
+        if rem_items:
+            parts.append(f"{rem_items} item(s)")
+        return ", ".join(parts) if parts else f"{total_items} item(s)"
 
 #######################
 # Conversion Menu Functions
@@ -227,16 +237,25 @@ def crafting_helper(config):
         print("2. Calculate obtainable outputs from available input items.")
         choice = input("Enter 1 or 2: ")
 
+        # Check for container override in user input (if user types a suffix)
+        user_input = input("Enter the desired amount (supports combined amounts, e.g. '30{0}, 15'): ".format(config["suffixes"]["stack"])).strip()
+        # If input ends with a specific container suffix, use that; otherwise use default.
+        if user_input.endswith(config["suffixes"]["dc"]):
+            container_override = "dc"
+        elif user_input.endswith(config["suffixes"]["sb"]):
+            container_override = "sb"
+        else:
+            container_override = config.get("container_preference", "sb")
         if choice == "1":
-            desired_output = float(input("Enter the desired number of outputs: "))
+            desired_output = float(parse_combined_amount(user_input, config))
             required_inputs = (input_required / output_result) * desired_output
             print(f"You need approximately {int(round(required_inputs))} input item(s) to produce {int(round(desired_output))} output(s).")
-            print("That is:", format_breakdown(required_inputs, config["auto_conversion"]))
+            print("That is:", format_breakdown(required_inputs, config["auto_conversion"], container_override))
         elif choice == "2":
             available_inputs = float(input("Enter the number of available input items: "))
             produced_outputs = (output_result / input_required) * available_inputs
             print(f"You can produce approximately {int(round(produced_outputs))} output item(s) with {int(round(available_inputs))} input(s).")
-            print("That is:", format_breakdown(produced_outputs, config["auto_conversion"]))
+            print("That is:", format_breakdown(produced_outputs, config["auto_conversion"], container_override))
         else:
             print("Invalid choice. Please select either 1 or 2.")
     except ValueError:
@@ -259,9 +278,8 @@ def compute_layered_requirements(layers, final_quantity):
     """
     Given a list of layers (ordered from first to last) and a desired final quantity,
     compute for each layer the total inputs required.
-    
-    This function propagates requirements from higher layers back to lower layers,
-    summing contributions if an ingredient is used in multiple layers.
+    Requirements are propagated backward so that if an ingredient is used in multiple layers,
+    its total need is summed.
     """
     required = {}
     # Final product requirement:
@@ -274,7 +292,7 @@ def compute_layered_requirements(layers, final_quantity):
         factor = req_quantity / layers[i]["output"]
         layer_req = {ing: factor * qty for ing, qty in layers[i]["inputs"].items()}
         computed_layers[i] = {"layer": i+1, "name": product, "requirements": layer_req}
-        # Propagate: for each input that is produced in an earlier layer, add it to its requirement.
+        # Propagate for any ingredient produced in an earlier layer.
         for ing, amt in layer_req.items():
             if any(prev_layer["name"] == ing for prev_layer in layers[:i]):
                 required[ing] = required.get(ing, 0) + amt
@@ -294,6 +312,13 @@ def advanced_crafting(recipes, config):
         
     target = input("Enter the target item: ").strip().lower()
     quantity_input = input("Enter the desired amount (supports combined amounts, e.g. '30{0}, 15'): ".format(config["suffixes"]["stack"])).strip()
+    # Check for explicit container override:
+    if quantity_input.endswith(config["suffixes"]["dc"]):
+        container_override = "dc"
+    elif quantity_input.endswith(config["suffixes"]["sb"]):
+        container_override = "sb"
+    else:
+        container_override = config.get("container_preference", "sb")
     try:
         quantity = int(parse_combined_amount(quantity_input, config))
     except ValueError as e:
@@ -303,22 +328,22 @@ def advanced_crafting(recipes, config):
     if target in recipes and "layers" in recipes[target]:
         layers = recipes[target]["layers"]
         layered_reqs = compute_layered_requirements(layers, quantity)
-        print(f"\nTo craft {format_breakdown(quantity, config['auto_conversion'])} of '{target}', you need the following per layer:")
+        print(f"\nTo craft {format_breakdown(quantity, config['auto_conversion'], container_override)} of '{target}', you need the following per layer:")
         for layer in layered_reqs:
             print(f"Layer {layer['layer']} ({layer['name']}):")
             for ing, amt in layer["requirements"].items():
                 if not config["auto_conversion"]:
                     print(f"  {ing}: {int(round(amt))} item(s)")
                 else:
-                    print(f"  {ing}: {format_breakdown(amt, config['auto_conversion'])}")
+                    print(f"  {ing}: {format_breakdown(amt, config['auto_conversion'], container_override)}")
     else:
         req = compute_requirements(target, quantity, recipes)
-        print(f"\nTo craft {format_breakdown(quantity, config['auto_conversion'])} of '{target}', you need:")
+        print(f"\nTo craft {format_breakdown(quantity, config['auto_conversion'], container_override)} of '{target}', you need:")
         for ing, amt in req.items():
             if not config["auto_conversion"]:
                 print(f"  {ing}: {int(round(amt))} item(s)")
             else:
-                print(f"  {ing}: {format_breakdown(amt, config['auto_conversion'])}")
+                print(f"  {ing}: {format_breakdown(amt, config['auto_conversion'], container_override)}")
     print()
 
 #######################
@@ -442,9 +467,10 @@ def config_menu(config):
         print("\n--- Configuration Menu ---")
         print(f"1. Toggle auto conversion (currently {'ON' if config['auto_conversion'] else 'OFF'})")
         print("2. Change suffixes")
-        print("3. Reset suffixes to default")
-        print("4. Back to main menu")
-        choice = input("Select an option (1-4): ").strip()
+        print("3. Change default container preference (currently '{}')".format(config.get("container_preference", "sb")))
+        print("4. Reset suffixes to default")
+        print("5. Back to main menu")
+        choice = input("Select an option (1-5): ").strip()
         if choice == "1":
             config["auto_conversion"] = not config["auto_conversion"]
             print("Auto conversion is now", "ON" if config["auto_conversion"] else "OFF")
@@ -462,10 +488,18 @@ def config_menu(config):
             print("Suffixes updated.")
             save_config(config)
         elif choice == "3":
+            pref = input("Enter default container preference ('sb' or 'dc'): ").strip().lower()
+            if pref in ["sb", "dc"]:
+                config["container_preference"] = pref
+                print("Default container preference updated to", pref)
+                save_config(config)
+            else:
+                print("Invalid preference. Please enter 'sb' or 'dc'.")
+        elif choice == "4":
             config["suffixes"] = DEFAULT_CONFIG["suffixes"].copy()
             print("Suffixes reset to default.")
             save_config(config)
-        elif choice == "4":
+        elif choice == "5":
             break
         else:
             print("Invalid option.")
