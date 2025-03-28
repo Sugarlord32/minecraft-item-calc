@@ -27,6 +27,14 @@ DEFAULT_RECIPES = {
             {"name": "planks", "inputs": {"logs": 1}, "output": 4},
             {"name": "trapdoor", "inputs": {"planks": 6}, "output": 2}
         ]
+    },
+    # Example multi-layer recipe for grindstone (numbers are illustrative):
+    "grindstone": {
+        "layers": [
+            {"name": "planks", "inputs": {"logs": 1}, "output": 4},
+            {"name": "sticks", "inputs": {"planks": 6}, "output": 4},
+            {"name": "grindstone", "inputs": {"stone slab": 1, "planks": 60, "sticks": 60}, "output": 1}
+        ]
     }
 }
 
@@ -249,19 +257,28 @@ def compute_requirements(item, quantity, recipes):
 
 def compute_layered_requirements(layers, final_quantity):
     """
-    Updated: For each layer, use the previous layer's product name to cascade requirements.
+    Given a list of layers (ordered from first to last) and a desired final quantity,
+    compute for each layer the total inputs required.
+    
+    This function propagates requirements from higher layers back to lower layers,
+    summing contributions if an ingredient is used in multiple layers.
     """
-    layered_reqs = []
-    current_quantity = final_quantity
+    required = {}
+    # Final product requirement:
+    required[layers[-1]["name"]] = final_quantity
+    computed_layers = [None] * len(layers)
+    # Process layers from last to first.
     for i in range(len(layers)-1, -1, -1):
-        layer = layers[i]
-        factor = current_quantity / layer["output"]
-        req = {ing: factor * qty for ing, qty in layer["inputs"].items()}
-        layered_reqs.insert(0, {"layer": i+1, "name": layer["name"], "requirements": req})
-        if i > 0:
-            previous_layer_product = layers[i-1]["name"]
-            current_quantity = req.get(previous_layer_product, 0)
-    return layered_reqs
+        product = layers[i]["name"]
+        req_quantity = required.get(product, 0)
+        factor = req_quantity / layers[i]["output"]
+        layer_req = {ing: factor * qty for ing, qty in layers[i]["inputs"].items()}
+        computed_layers[i] = {"layer": i+1, "name": product, "requirements": layer_req}
+        # Propagate: for each input that is produced in an earlier layer, add it to its requirement.
+        for ing, amt in layer_req.items():
+            if any(prev_layer["name"] == ing for prev_layer in layers[:i]):
+                required[ing] = required.get(ing, 0) + amt
+    return computed_layers
 
 def advanced_crafting(recipes, config):
     print("\n--- Advanced Crafting Helper ---")
