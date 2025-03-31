@@ -41,7 +41,7 @@ A versatile command-line Python tool designed to simplify various calculations f
 2.  Navigate to the directory where you saved the script.
 3.  Run the script using Python:
     ```bash
-    python mc_calculator.py
+    python minecalc.py
     ```
 4.  The script will present a menu with options (1-8). Enter the number corresponding to the action you want to perform.
 5.  Follow the on-screen prompts for each feature.
