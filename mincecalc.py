@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import json
 import math
 from pathlib import Path # Use pathlib for cleaner path handling
@@ -471,7 +470,7 @@ def advanced_crafting(recipes: dict, config: dict):
     recipe_data = recipes[target]
 
     print("-" * 20) # Separator
-
+    
     if "layers" in recipe_data:
         # --- Multi-Layer Recipe Calculation ---
         layers = recipe_data["layers"]
@@ -483,51 +482,75 @@ def advanced_crafting(recipes: dict, config: dict):
             # Display layer-by-layer breakdown
             base_materials = {} # Collect materials not produced by any layer
             for comp in layered_reqs_computed:
+                # Basic layer info (unchanged)
                 print(f"\nLayer {comp['layer']} ({comp['name']}):")
-                print(f"  Crafts needed: {comp['crafts']} (produces {format_breakdown(comp['produced'], auto_conv, container_override)})")
+                # Use the actual produced amount for display consistency
+                produced_display = format_breakdown(comp['produced'], auto_conv, container_override)
+                print(f"  Crafts needed: {comp['crafts']} (produces {produced_display})")
                 if "error" in comp:
                     print(f"  Error calculating inputs: {comp['error']}")
                     continue
 
                 print("  Inputs required for this layer:")
-                for ing, amt in comp["requirements"].items():
+                # Sort ingredients for consistent output order
+                for ing, amt in sorted(comp["requirements"].items()):
                      # Check if this ingredient is produced by an earlier layer
                      is_intermediate = any(layer["name"] == ing for layer in layers[:comp['layer']-1])
+                     # Format the amount needed *for this specific layer*
+                     formatted_amt = format_breakdown(amt, auto_conv, container_override)
+
                      if not is_intermediate:
                          # If not produced earlier, it's a base material for this path
                          base_materials[ing] = base_materials.get(ing, 0) + amt
                          # Display requirement for this layer
-                         print(f"    - {ing}: {format_breakdown(amt, auto_conv, container_override)}")
+                         print(f"    - {ing}: {formatted_amt}")
                      else:
-                          # If intermediate, just note it's needed (amount comes from earlier layer)
-                           print(f"    - {ing}: (Produced in Layer {next(idx+1 for idx, l in enumerate(layers) if l['name'] == ing)})")
+                          # Intermediate item: Show amount needed for THIS layer and where it comes from
+                          try:
+                              # Find the layer where this ingredient is produced
+                              source_layer_idx = next(idx + 1 for idx, l in enumerate(layers) if l['name'] == ing)
+                              # Print the formatted amount AND the source layer note
+                              print(f"    - {ing}: {formatted_amt} (Produced in Layer {source_layer_idx})")
+                          except StopIteration:
+                              # This case should theoretically not happen if is_intermediate is True,
+                              # but adding a fallback for robustness.
+                              print(f"    - {ing}: {formatted_amt} (Error: Source layer not found)")
+                          # ***** END OF CHANGE *****
 
-
-            # Display final summary of base materials
+            # Display final summary of base materials (unchanged)
             print("\n--- Total Base Materials Required ---")
             if not base_materials:
-                 print("  (No base materials identified - check layer inputs)")
+                 print("  (No base materials identified - check layer inputs or if all inputs are intermediate)")
             else:
-                for ing, amt in sorted(base_materials.items()): # Sort for consistent output
+                # Sort base materials for consistent output
+                for ing, amt in sorted(base_materials.items()):
+                    # Display final base material requirements
                     print(f"  {ing}: {format_breakdown(amt, auto_conv, container_override)}")
 
         except Exception as e:
             print(f"\nAn error occurred during layered calculation: {e}")
-            # Provide more context if possible, e.g., which layer failed if traceable
+            # Consider adding more specific error logging here if needed
+            import traceback
+            traceback.print_exc() # Optional: Print full traceback for debugging
 
     else:
         # --- Simple Recipe Calculation (Recursive) ---
+        # (This part remains unchanged)
         try:
             base_requirements = compute_requirements(target, quantity, recipes)
-            print(f"To craft {format_breakdown(quantity, auto_conv, container_override)} of '{target}', you need:")
+            print(f"\nTo craft {format_breakdown(quantity, auto_conv, container_override)} of '{target}', you need:")
             if not base_requirements:
                  print("  (No requirements calculated - check recipe or inputs)")
             else:
                 for ingredient, amount in sorted(base_requirements.items()): # Sort for consistency
-                    # Use ceiling for final display of base items
+                    # Use ceiling for final display of base items? Or stick to floor/breakdown?
+                    # Current format_breakdown handles this based on auto_conv.
                     print(f"  {ingredient}: {format_breakdown(amount, auto_conv, container_override)}")
         except Exception as e:
             print(f"\nAn error occurred during simple calculation: {e}")
+            import traceback
+            traceback.print_exc() # Optional: Print full traceback for debugging
+
 
     print("-" * 20 + "\n") # Separator
 
